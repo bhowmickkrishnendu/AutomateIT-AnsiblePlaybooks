@@ -1,0 +1,36 @@
+- hosts: windows_servers
+  tasks:
+    - name: Install 7-Zip
+      win_chocolatey:
+        name: 7zip
+        state: present
+
+    - name: Install Google Chrome
+      win_chocolatey:
+        name: googlechrome
+        state: present
+
+    - name: Install Firefox
+      win_chocolatey:
+        name: firefox
+        state: present
+
+    - name: Install JDK 17
+      win_chocolatey:
+        name: openjdk17
+        state: present
+
+    - name: Install Slack
+      win_chocolatey:
+        name: slack
+        state: present
+
+    - name: Install Putty
+      win_chocolatey:
+        name: putty
+        state: present
+
+    - name: Install WinSCP
+      win_chocolatey:
+        name: winscp
+        state: present
