@@ -1,0 +1,8 @@
+- hosts: windows_servers
+  tasks:
+    - name: Allow incoming HTTP traffic
+      win_firewall_rule:
+        name: "Allow HTTP"
+        localport: 80
+        direction: in
+        action: allow
