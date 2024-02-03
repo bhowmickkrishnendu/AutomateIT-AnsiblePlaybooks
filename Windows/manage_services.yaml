@@ -1,0 +1,25 @@
+- hosts: windows_servers
+  tasks:
+    - name: Start service
+      win_service:
+        name: "{{ service_name }}"
+        state: started
+      vars:
+        service_name: "ServiceName"
+
+    - name: Stop service
+      win_service:
+        name: "{{ service_name }}"
+        state: stopped
+      vars:
+        service_name: "ServiceName"
+
+    - name: Check service status
+      win_service:
+        name: "{{ service_name }}"
+      register: service_status
+      vars:
+        service_name: "ServiceName"
+
+    - debug:
+        msg: "Service status is {{ service_status.state }}"
