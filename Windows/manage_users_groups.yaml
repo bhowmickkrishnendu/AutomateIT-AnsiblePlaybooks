@@ -1,0 +1,49 @@
+- hosts: windows_servers
+  tasks:
+    - name: Create user
+      win_user:
+        name: "{{ user_name }}"
+        password: "{{ user_password }}"
+        state: present
+      vars:
+        user_name: "new_user"
+        user_password: "user_password"
+
+    - name: Delete user
+      win_user:
+        name: "{{ user_name }}"
+        state: absent
+      vars:
+        user_name: "user_to_delete"
+
+    - name: Make user part of Standard Users group
+      win_group_membership:
+        name: "Standard Users"
+        members: "{{ user_name }}"
+        state: present
+      vars:
+        user_name: "user_to_modify"
+
+    - name: Make user part of Administrators group
+      win_group_membership:
+        name: "Administrators"
+        members: "{{ user_name }}"
+        state: present
+      vars:
+        user_name: "user_to_modify"
+
+    - name: Unlock user account
+      win_user:
+        name: "{{ user_name }}"
+        state: present
+        password_never_expires: yes
+        account_locked: no
+      vars:
+        user_name: "user_to_unlock"
+
+    - name: Deactivate user account
+      win_user:
+        name: "{{ user_name }}"
+        state: absent
+      vars:
+        user_name: "user_to_deactivate"
