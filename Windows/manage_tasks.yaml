@@ -1,0 +1,14 @@
+- hosts: windows_servers
+  tasks:
+    - name: Create scheduled task to run batch file
+      win_scheduled_task:
+        name: "RunBatchFile"
+        description: "Run batch file every Friday at 11:30 PM"
+        actions:
+          - path: "C:\\path\\to\\batch_file.bat"
+            arguments: ""
+        triggers:
+          - weekly:
+              days: ['Friday']
+              start_time: "23:30"
+        state: present
