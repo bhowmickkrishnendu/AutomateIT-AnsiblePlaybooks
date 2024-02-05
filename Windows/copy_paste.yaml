@@ -1,0 +1,10 @@
+- hosts: windows_servers
+  tasks:
+    - name: Backup file
+      win_copy:
+        src: "C:\\path\\to\\file"
+        dest: "C:\\backup\\file"
+    - name: Restore file
+      win_copy:
+        src: "C:\\backup\\file"
+        dest: "C:\\path\\to\\file"
