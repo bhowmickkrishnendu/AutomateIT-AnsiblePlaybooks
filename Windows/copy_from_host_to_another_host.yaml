@@ -1,0 +1,7 @@
+- hosts: source_host
+  tasks:
+    - name: Copy file/folder to destination host
+      win_copy:
+        src: "C:\\path\\to\\file_or_folder"
+        dest: "C:\\path\\to\\destination"
+      delegate_to: destination_host
