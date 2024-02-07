@@ -1,0 +1,24 @@
+# monitor_system_performance.yaml
+
+- hosts: windows_servers
+  tasks:
+    - name: Retrieve CPU usage
+      win_perf_counters:
+        object: "Processor"
+        instances: "*"
+        counters:
+          - "% Processor Time"
+      register: cpu_usage
+
+    - name: Retrieve RAM usage
+      win_perf_counters:
+        object: "Memory"
+        counters:
+          - "% Committed Bytes In Use"
+      register: ram_usage
+
+    - debug:
+        msg: "CPU usage: {{ cpu_usage }}"
+        
+    - debug:
+        msg: "RAM usage: {{ ram_usage }}"
