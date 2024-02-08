@@ -1,0 +1,10 @@
+# get_public_ip.yaml
+
+- hosts: windows_servers
+  tasks:
+    - name: Fetch public IP address
+      win_shell: powershell.exe -ExecutionPolicy Bypass -File C:\path\to\fetch_public_ip.ps1
+      register: public_ip_output
+
+    - debug:
+        msg: "Public IP address: {{ public_ip_output.stdout }}"
