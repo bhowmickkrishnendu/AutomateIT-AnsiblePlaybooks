@@ -1,0 +1,47 @@
+---
+# 1. webserver-setup.yml
+- hosts: webservers
+  become: yes
+
+  vars:
+    http_port: 80
+    max_clients: 200
+    php_extensions_required:
+      - php-curl
+      - php-gd
+      - php-mbstring
+
+  tasks:
+    - name: Install Apache
+      apt:
+        name:
+          - apache2
+          - "{{ php_extensions_required }}"
+        state: present
+
+    - name: Set PHP configuration
+      lineinfile:
+        path: /etc/php/7.4/apache2/php.ini
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      with_items:
+        - { regexp: '^upload_max_filesize', line: 'upload_max_filesize = 100M' }
+        - { regexp: '^post_max_size', line: 'post_max_size = 108M' }
+
+    - name: Configure Apache
+      lineinfile:
+        path: /etc/apache2/apache2.conf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      with_items:
+        - { regexp: '^Listen', line: "Listen {{ http_port }}" }
+        - { regexp: '^MaxClients', line: "MaxClients {{ max_clients }}" }
+      notify:
+        - restart apache
+
+  handlers:
+    - name: restart apache
+      systemd:
+        state: restarted
+        daemon_reload: yes
+        name: apache2
