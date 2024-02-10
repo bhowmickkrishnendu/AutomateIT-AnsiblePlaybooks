@@ -1,0 +1,88 @@
+# 7. monitoring-stack-setup.yml
+- hosts: monitoring
+  become: yes
+
+  vars:
+    prometheus_version: 2.37.0
+    grafana_version: 8.5.9
+    node_exporter_version: 1.3.1
+
+  tasks:
+    - name: Install required packages
+      apt:
+        name:
+          - wget
+          - unzip
+        state: present
+
+    # Prometheus Setup
+    - name: Download and unpack Prometheus
+      unarchive:
+        src: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+        dest: /opt
+        remote_src: yes
+        creates: /opt/prometheus-{{ prometheus_version }}.linux-amd64
+
+    - name: Configure Prometheus
+      template:
+        src: prometheus.yml.j2
+        dest: /opt/prometheus-{{ prometheus_version }}.linux-amd64/prometheus.yml
+
+    - name: Copy Prometheus systemd unit file
+      copy:
+        src: prometheus.service
+        dest: /etc/systemd/system/prometheus.service
+
+    - name: Start Prometheus
+      systemd:
+        name: prometheus
+        enabled: yes
+        state: started
+
+    # Grafana Setup
+    - name: Download Grafana
+      get_url:
+        url: "https://dl.grafana.com/oss/release/grafana-{{ grafana_version }}.linux-amd64.deb"
+        dest: /tmp/grafana.deb
+
+    - name: Install Grafana
+      apt:
+        deb: /tmp/grafana.deb
+
+    - name: Configure Grafana
+      template:
+        src: grafana.ini.j2
+        dest: /etc/grafana/grafana.ini
+      notify:
+        - restart grafana
+
+    # Node Exporter Setup
+    - name: Download Node Exporter
+      get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: /tmp/node_exporter.tar.gz
+
+    - name: Unpack Node Exporter
+      unarchive:
+        src: /tmp/node_exporter.tar.gz
+        dest: /opt
+        remote_src: yes
+        creates: /opt/node_exporter-{{ node_exporter_version }}.linux-amd64
+
+    - name: Copy Node Exporter systemd unit file
+      copy:
+        src: node_exporter.service
+        dest: /etc/systemd/system/node_exporter.service
+
+    - name: Start Node Exporter
+      systemd:
+        name: node_exporter
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: restart grafana
+      systemd:
+        state: restarted
+        daemon_reload: yes
+        name: grafana-server
