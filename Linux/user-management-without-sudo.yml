@@ -1,0 +1,36 @@
+# user-management.yml
+- hosts: all
+  become: yes
+
+  vars:
+    new_user: myuser
+    user_password: "mySecurePassword"
+
+  tasks:
+    - name: Create new user
+      user:
+        name: "{{ new_user }}"
+        password: "{{ user_password | password_hash('sha512') }}"
+        shell: /bin/bash
+        groups: users
+        create_home: yes
+
+    - name: Add SSH key for new user
+      authorized_key:
+        user: "{{ new_user }}"
+        key: "https://github.com/{{ new_user }}.keys"
+
+    - name: Disable root SSH
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^PermitRootLogin"
+        line: "PermitRootLogin no"
+      notify:
+        - restart ssh
+
+  handlers:
+    - name: restart ssh
+      systemd:
+        state: restarted
+        daemon_reload: yes
+        name: sshd
