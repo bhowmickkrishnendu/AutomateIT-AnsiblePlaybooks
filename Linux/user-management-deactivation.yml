@@ -1,0 +1,38 @@
+# user-management.yml
+- hosts: all
+  become: yes
+
+  vars:
+    user_to_deactivate: myuser
+
+  tasks:
+    - name: Deactivate user
+      user:
+        name: "{{ user_to_deactivate }}"
+        state: absent
+        remove: yes
+        force: yes
+
+    - name: Remove user's home directory
+      file:
+        path: "/home/{{ user_to_deactivate }}"
+        state: absent
+
+    - name: Remove user from sudo group
+      user:
+        name: "{{ user_to_deactivate }}"
+        groups: sudo
+        append: no
+        state: absent
+
+    - name: Disable SSH access for user
+      authorized_key:
+        user: "{{ user_to_deactivate }}"
+        state: absent
+
+  handlers:
+    - name: restart ssh
+      systemd:
+        state: restarted
+        daemon_reload: yes
+        name: sshd
