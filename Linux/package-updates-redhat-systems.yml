@@ -1,0 +1,50 @@
+# package-updates.yml
+- hosts: all
+  become: yes
+
+  vars:
+    package_state: latest
+    reboot_timeout: 3600
+
+  tasks:
+    - name: Update repositories cache
+      dnf:
+        update_cache: yes
+
+    - name: Upgrade all packages
+      dnf:
+        name: "*"
+        state: "{{ package_state }}"
+      register: result
+      retries: 5
+      delay: 10
+      until: result is succeeded
+
+    - name: Remove dependencies for unneeded packages
+      dnf:
+        autoremove: yes
+
+    - name: Reboot if kernel updated
+      reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+      when: result.restarted is defined and result.restarted
+
+    - name: Check if reboot required
+      stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+
+    - name: Reboot if reboot-required file exists
+      reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+      when: reboot_required_file.stat.exists
+
+    - name: Check if reboot required by DNF
+      command: /usr/bin/needs-restarting -r
+      register: needs_restarting
+      changed_when: needs_restarting.stdout != ""
+
+    - name: Reboot if DNF requires it
+      reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+      when: needs_restarting.stdout != ""

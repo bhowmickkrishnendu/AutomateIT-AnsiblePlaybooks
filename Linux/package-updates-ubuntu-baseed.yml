@@ -1,0 +1,41 @@
+# package-updates.yml
+- hosts: all
+  become: yes
+
+  vars:
+    package_state: latest
+    reboot_timeout: 3600
+
+  pre_tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+  tasks:
+    - name: Upgrade all packages
+      apt:
+        name: "*"
+        state: "{{ package_state }}"
+      register: result
+      retries: 5
+      delay: 10
+      until: result is succeeded
+
+    - name: Remove dependencies for unneeded packages
+      apt:
+        autoremove: yes
+
+    - name: Reboot if kernel updated
+      reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+      when: result.restarted is defined and result.restarted
+
+    - name: Check if reboot required
+      stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+
+    - name: Reboot if reboot-required file exists
+      reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+      when: reboot_required_file.stat.exists
