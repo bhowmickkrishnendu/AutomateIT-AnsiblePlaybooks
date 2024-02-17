@@ -1,0 +1,30 @@
+# firewall-configuration.yml
+- hosts: all
+  become: yes
+
+  vars:
+    allowed_tcp_ports:
+      - "22"    # SSH
+      - "80"    # HTTP
+
+  tasks:
+    - name: Install UFW
+      apt:
+        name: ufw
+        state: present
+
+    - name: Set default policies
+      ufw:
+        default: deny
+        state: enabled
+
+    - name: Allow specific TCP ports
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+      loop: "{{ allowed_tcp_ports }}"
+
+    - name: Deny all other incoming traffic
+      ufw:
+        default: deny
+        state: enabled
