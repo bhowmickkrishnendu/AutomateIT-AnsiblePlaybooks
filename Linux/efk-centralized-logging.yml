@@ -1,0 +1,86 @@
+# centralized-logging.yml
+- hosts: logservers
+  become: yes
+
+  vars:
+    logstash_version: 8.3.2
+    elasticsearch_version: 8.3.2
+    kibana_version: 8.3.2
+
+  tasks:
+    - name: Install Java
+      apt:
+        name: openjdk-11-jre
+        state: present
+
+    # Logstash Setup
+    - name: Download and unpack Logstash
+      unarchive:
+        src: "https://artifacts.elastic.co/downloads/logstash/logstash-{{ logstash_version }}.tar.gz"
+        dest: /opt
+        remote_src: yes
+        creates: /opt/logstash-{{ logstash_version }}
+
+    - name: Configure Logstash
+      template:
+        src: logstash.yml.j2
+        dest: /opt/logstash-{{ logstash_version }}/config/logstash.yml
+
+    - name: Copy Logstash systemd unit file
+      copy:
+        src: logstash.service
+        dest: /etc/systemd/system/logstash.service
+
+    - name: Start Logstash
+      systemd:
+        name: logstash
+        enabled: yes
+        state: started
+
+    # Elasticsearch Setup
+    - name: Download and unpack Elasticsearch
+      unarchive:
+        src: "https://artifacts.elastic.co/downloads/elasticsearch/elasticsearch-{{ elasticsearch_version }}.tar.gz"
+        dest: /opt
+        remote_src: yes
+        creates: /opt/elasticsearch-{{ elasticsearch_version }}
+
+    - name: Configure Elasticsearch
+      template:
+        src: elasticsearch.yml.j2
+        dest: /opt/elasticsearch-{{ elasticsearch_version }}/config/elasticsearch.yml
+
+    - name: Copy Elasticsearch systemd unit file
+      copy:
+        src: elasticsearch.service
+        dest: /etc/systemd/system/elasticsearch.service
+
+    - name: Start Elasticsearch
+      systemd:
+        name: elasticsearch
+        enabled: yes
+        state: started
+
+    # Kibana Setup
+    - name: Download Kibana
+      get_url:
+        url: "https://artifacts.elastic.co/downloads/kibana/kibana-{{ kibana_version }}-linux-x86_64.deb"
+        dest: /tmp/kibana.deb
+
+    - name: Install Kibana
+      apt:
+        deb: /tmp/kibana.deb
+
+    - name: Configure Kibana
+      template:
+        src: kibana.yml.j2
+        dest: /etc/kibana/kibana.yml
+      notify:
+        - restart kibana
+
+  handlers:
+    - name: restart kibana
+      systemd:
+        state: restarted
+        daemon_reload: yes
+        name: kibana
