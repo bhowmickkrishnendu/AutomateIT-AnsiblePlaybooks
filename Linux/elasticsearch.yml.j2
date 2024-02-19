@@ -1,0 +1,7 @@
+cluster.name: "{{ cluster_name }}"
+node.name: "{{ inventory_hostname }}"
+network.host: "{{ hostvars[inventory_hostname]['ansible_' + elasticsearch_interface]['ipv4']['address'] }}"
+http.port: 9200
+discovery.seed_hosts: [{% for host in groups['logservers'] %}"{{ hostvars[host]['ansible_' + elasticsearch_interface]['ipv4']['address'] }}:9300"{% if not loop.last %}, {% endif %}{% endfor %}]
+path.data: /var/lib/elasticsearch
+path.logs: /var/log/elasticsearch

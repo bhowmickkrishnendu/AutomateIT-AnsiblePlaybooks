@@ -1,0 +1,21 @@
+http.host: "{{ hostvars[inventory_hostname]['ansible_' + logstash_interface]['ipv4']['address'] }}"
+path.data: /var/log/logstash
+path.logs: /var/log/logstash
+
+# Pipelines
+pipeline.sources: ["input.conf"]
+queue.type: persisted
+
+# Input plugins
+input {
+  beats {
+    port => 5044
+  }
+}
+
+# Output plugins
+output {
+  elasticsearch {
+    hosts => ["{{ hostvars[inventory_hostname]['ansible_' + logstash_interface]['ipv4']['address'] }}:9200"]
+  }
+}

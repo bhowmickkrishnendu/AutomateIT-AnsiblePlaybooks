@@ -1,0 +1,3 @@
+server.host: "{{ hostvars[inventory_hostname]['ansible_' + kibana_interface]['ipv4']['address'] }}"
+server.port: 5601
+elasticsearch.hosts: ["http://{{ hostvars[inventory_hostname]['ansible_' + elasticsearch_interface]['ipv4']['address'] }}:9200"]
