@@ -1,0 +1,31 @@
+---
+- name: Update Jenkins on Ubuntu
+  hosts: all
+  become: yes
+
+  tasks:
+
+  - name: Find existing Jenkins WAR file
+    shell: "find / -type f -name jenkins.war 2>/dev/null"
+    register: jenkins_war_location
+
+  - name: Download latest Jenkins WAR file
+    get_url:
+      url: https://updates.jenkins.io/download/war/2.426.3/jenkins.war
+      dest: /tmp/jenkins.war
+
+  - name: Stop Jenkins service
+    service:
+     name: jenkins
+     state: stopped
+
+  - name: Copy new Jenkins WAR file
+    copy:
+      src: /tmp/jenkins.war
+      dest: "{{ jenkins_war_location.stdout.split('\n')[0] }}"
+    when: jenkins_war_location.stdout !=""
+
+  - name: Start Jenkins service  
+    service:
+      name: jenkins
+      state: started
