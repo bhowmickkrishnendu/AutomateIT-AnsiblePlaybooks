@@ -1,0 +1,25 @@
+---
+- hosts: client_systems
+  become: yes
+
+  vars:
+    node_exporter_version: 1.5.0
+
+  tasks:
+
+    - name: Add Node Exporter repository
+      apt_repository:
+        repo: "deb https://repo.prometheus.io/{{ ansible_distribution|lower }} {{ ansible_distribution_release }} main"
+        state: present
+
+    - name: Install Node Exporter
+      apt:
+        name: "node_exporter={{ node_exporter_version }}*"
+        state: present
+        update_cache: yes
+
+    - name: Start and enable Node Exporter
+      systemd:
+        name: node_exporter
+        enabled: yes
+        state: started
