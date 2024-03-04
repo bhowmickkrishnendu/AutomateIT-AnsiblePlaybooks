@@ -1,0 +1,31 @@
+---
+- hosts: all
+  become: yes
+
+  tasks:
+
+    - name: Install required packages
+      apt:
+        name:
+          - openjdk-11-jdk
+        state: present
+        update_cache: yes
+
+    - name: Set JAVA_HOME environment variable
+      lineinfile:
+        path: /etc/environment
+        line: "JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64"
+        state: present
+        create: yes
+
+    - name: Set Java alternatives
+      alternatives:
+        name: java
+        link: /usr/bin/java
+        path: /usr/lib/jvm/java-11-openjdk-amd64/bin/java
+
+    - name: Set javac alternatives
+      alternatives:
+        name: javac
+        link: /usr/bin/javac
+        path: /usr/lib/jvm/java-11-openjdk-amd64/bin/javac
