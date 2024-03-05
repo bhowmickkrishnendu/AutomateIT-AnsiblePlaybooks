@@ -1,0 +1,49 @@
+---
+- hosts: client_systems
+  become: yes
+
+  vars:
+    tomcat_version: 10.1.20
+    tomcat_download_url: https://dlcdn.apache.org/tomcat/tomcat-10/v{{ tomcat_version }}/bin/apache-tomcat-{{ tomcat_version }}.zip
+    tomcat_install_dir: /home/ubuntu/tomcat
+
+  tasks:
+
+    - name: Install required packages
+      apt:
+        name:
+          - unzip
+          - openjdk-11-jre
+        state: present
+
+    - name: Download Tomcat
+      unarchive:
+        src: "{{ tomcat_download_url }}"
+        remote_src: yes
+        dest: /home/ubuntu
+        creates: "{{ tomcat_install_dir }}"
+
+    - name: Rename Tomcat directory
+      command: mv /home/ubuntu/apache-tomcat-{{ tomcat_version }} "{{ tomcat_install_dir }}"
+
+    - name: Create Tomcat service
+      template:
+        src: tomcat.service.j2
+        dest: /etc/systemd/system/tomcat.service
+        mode: 0644
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Start and enable Tomcat service
+      systemd:
+        name: tomcat
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: Restart Tomcat
+      systemd:
+        name: tomcat
+        state: restarted
