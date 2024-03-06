@@ -1,0 +1,53 @@
+---
+- hosts: all
+  become: yes
+
+  vars:
+    tomcat_service_content: |
+      # Systemd unit file for tomcat
+      [Unit]
+      Description=Apache Tomcat Web Application Container
+      After=syslog.target network.target
+
+      [Service]
+      Type=forking
+      Environment=CATALINA_PID=/home/ubuntu/apache-tomcat-10.1.4/temp/tomcat.pid
+      Environment=CATALINA_HOME=/home/ubuntu/apache-tomcat-10.1.4
+      Environment=CATALINA_BASE=/home/ubuntu/apache-tomcat-10.1.4
+      ExecStart=/home/ubuntu/apache-tomcat-10.1.4/bin/startup.sh
+      ExecStop=/bin/kill -15 $MAINPID
+      User=exclaim
+      Group=exclaim
+      UMask=0007
+      RestartSec=10
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+
+  tasks:
+
+    - name: Copy Tomcat systemd service file
+      copy:
+        content: "{{ tomcat_service_content }}"
+        dest: /etc/systemd/system/tomcat.service
+        mode: 0644
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable Tomcat service
+      systemd:
+        name: tomcat
+        enabled: yes
+
+    - name: Get Tomcat service status
+      systemd:
+        state: status
+        name: tomcat
+      register: tomcat_service_status
+
+    - name: Output Tomcat service status
+      debug:
+        var: tomcat_service_status.status.stdout
