@@ -1,0 +1,49 @@
+---
+- name: Install SonarQube
+  hosts: your_ubuntu_server
+  become: yes
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install prerequisites
+      apt:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - openjdk-11-jdk
+        - unzip
+
+    - name: Download SonarQube
+      get_url:
+        url: "https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-8.9.2.46101.zip"
+        dest: /tmp/sonarqube.zip
+
+    - name: Extract SonarQube
+      unarchive:
+        src: /tmp/sonarqube.zip
+        dest: /opt
+        remote_src: yes
+        extra_opts: [--strip-components=1]
+
+    - name: Set ownership and permissions
+      file:
+        path: /opt/sonarqube
+        owner: sonarqube
+        group: sonarqube
+        mode: '0755'
+        recurse: yes
+
+    - name: Configure SonarQube
+      lineinfile:
+        path: /opt/sonarqube/conf/sonar.properties
+        regexp: '^#?sonar.jdbc.username='
+        line: 'sonar.jdbc.username=sonarqube'
+
+    - name: Start SonarQube service
+      systemd:
+        name: sonarqube
+        state: started
+        enabled: yes
