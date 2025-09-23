@@ -1,0 +1,120 @@
+- hosts: all
+  become: yes
+  vars:
+    kube_minor: "v1.34"
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+
+    - name: Install base deps
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+        state: present
+
+    # Disable swap and persist
+    - name: Disable swap now
+      command: swapoff -a
+      changed_when: false
+
+    - name: Comment out swap in fstab
+      replace:
+        path: /etc/fstab
+        regexp: '^\s*([^#].*\s+swap\s+.*)$'
+        replace: '# \1'
+
+    # Kernel modules
+    - name: Ensure containerd modules file
+      copy:
+        dest: /etc/modules-load.d/containerd.conf
+        content: |
+          overlay
+          br_netfilter
+
+    - name: Load overlay
+      modprobe:
+        name: overlay
+        state: present
+
+    - name: Load br_netfilter
+      modprobe:
+        name: br_netfilter
+        state: present
+
+    # Sysctls for Kubernetes networking
+    - name: Sysctl settings for Kubernetes
+      copy:
+        dest: /etc/sysctl.d/99-kubernetes-cri.conf
+        content: |
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward = 1
+
+    - name: Apply sysctl
+      command: sysctl --system
+
+    # containerd runtime
+    - name: Install containerd
+      apt:
+        name: containerd
+        state: present
+
+    - name: Generate default containerd config
+      shell: |
+        mkdir -p /etc/containerd
+        containerd config default > /etc/containerd/config.toml
+      args:
+        creates: /etc/containerd/config.toml
+
+    - name: Use systemd cgroups in containerd
+      replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
+
+    - name: Enable and restart containerd
+      systemd:
+        name: containerd
+        enabled: yes
+        state: restarted
+
+    # Kubernetes repo via pkgs.k8s.io (v1.34)
+    - name: Ensure keyrings directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Fetch Kubernetes apt key (pkgs.k8s.io)
+      shell: |
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/{{ kube_minor }}/deb/Release.key \
+        | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Add Kubernetes apt repository (pkgs.k8s.io v1.34)
+      copy:
+        dest: /etc/apt/sources.list.d/kubernetes.list
+        content: |
+          deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ kube_minor }}/deb/ /
+
+    - name: Update apt cache after adding repo
+      apt:
+        update_cache: yes
+
+    - name: Install kubelet, kubeadm, kubectl
+      apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+
+    - name: Hold kube packages
+      shell: apt-mark hold kubelet kubeadm kubectl
+      changed_when: false
