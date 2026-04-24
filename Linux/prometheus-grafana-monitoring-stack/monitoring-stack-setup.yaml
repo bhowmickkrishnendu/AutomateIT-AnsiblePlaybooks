@@ -1,88 +1,164 @@
-# 7. monitoring-stack-setup.yml
-- hosts: monitoring
-  become: yes
+---
+- name: Configure monitoring stack host
+  hosts: monitoring
+  become: true
 
   vars:
-    prometheus_version: 2.37.0
-    grafana_version: 8.5.9
-    node_exporter_version: 1.3.1
+    prometheus_version: 2.54.1
+    grafana_version: 11.1.4
+    node_exporter_version: 1.8.2
 
   tasks:
-    - name: Install required packages
+    - name: Install required OS packages
       apt:
         name:
           - wget
-          - unzip
+          - tar
+          - adduser
+          - libfontconfig1
         state: present
+        update_cache: true
 
-    # Prometheus Setup
+    - name: Create service users
+      user:
+        name: "{{ item }}"
+        shell: /usr/sbin/nologin
+        system: true
+        create_home: false
+      loop:
+        - prometheus
+        - node_exporter
+
+    - name: Create Prometheus directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: prometheus
+        group: prometheus
+        mode: "0755"
+      loop:
+        - /etc/prometheus
+        - /var/lib/prometheus
+
     - name: Download and unpack Prometheus
       unarchive:
         src: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
         dest: /opt
-        remote_src: yes
-        creates: /opt/prometheus-{{ prometheus_version }}.linux-amd64
+        remote_src: true
+        creates: "/opt/prometheus-{{ prometheus_version }}.linux-amd64"
 
-    - name: Configure Prometheus
-      template:
-        src: prometheus.yml.j2
-        dest: /opt/prometheus-{{ prometheus_version }}.linux-amd64/prometheus.yml
-
-    - name: Copy Prometheus systemd unit file
+    - name: Install Prometheus binaries
       copy:
-        src: prometheus.service
-        dest: /etc/systemd/system/prometheus.service
+        src: "/opt/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+        dest: "/usr/local/bin/{{ item }}"
+        remote_src: true
+        mode: "0755"
+      loop:
+        - prometheus
+        - promtool
 
-    - name: Start Prometheus
+    - name: Configure Prometheus scrape targets
+      copy:
+        dest: /etc/prometheus/prometheus.yml
+        owner: prometheus
+        group: prometheus
+        mode: "0644"
+        content: |
+          global:
+            scrape_interval: 15s
+
+          scrape_configs:
+            - job_name: prometheus
+              static_configs:
+                - targets: ['localhost:9090']
+
+            - job_name: node_exporter
+              static_configs:
+                - targets: ['localhost:9100']
+
+    - name: Create Prometheus systemd unit file
+      copy:
+        dest: /etc/systemd/system/prometheus.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Prometheus
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          User=prometheus
+          Group=prometheus
+          Type=simple
+          ExecStart=/usr/local/bin/prometheus \
+            --config.file=/etc/prometheus/prometheus.yml \
+            --storage.tsdb.path=/var/lib/prometheus \
+            --web.listen-address=:9090
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start and enable Prometheus
       systemd:
         name: prometheus
-        enabled: yes
+        daemon_reload: true
+        enabled: true
         state: started
 
-    # Grafana Setup
-    - name: Download Grafana
+    - name: Download Grafana package
       get_url:
-        url: "https://dl.grafana.com/oss/release/grafana-{{ grafana_version }}.linux-amd64.deb"
-        dest: /tmp/grafana.deb
+        url: "https://dl.grafana.com/oss/release/grafana_{{ grafana_version }}_amd64.deb"
+        dest: /tmp/grafana_amd64.deb
+        mode: "0644"
 
-    - name: Install Grafana
+    - name: Install Grafana package
       apt:
-        deb: /tmp/grafana.deb
+        deb: /tmp/grafana_amd64.deb
 
-    - name: Configure Grafana
-      template:
-        src: grafana.ini.j2
-        dest: /etc/grafana/grafana.ini
-      notify:
-        - restart grafana
+    - name: Ensure Grafana is enabled and running
+      systemd:
+        name: grafana-server
+        enabled: true
+        state: started
 
-    # Node Exporter Setup
-    - name: Download Node Exporter
-      get_url:
-        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
-        dest: /tmp/node_exporter.tar.gz
-
-    - name: Unpack Node Exporter
+    - name: Download and unpack Node Exporter
       unarchive:
-        src: /tmp/node_exporter.tar.gz
+        src: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
         dest: /opt
-        remote_src: yes
-        creates: /opt/node_exporter-{{ node_exporter_version }}.linux-amd64
+        remote_src: true
+        creates: "/opt/node_exporter-{{ node_exporter_version }}.linux-amd64"
 
-    - name: Copy Node Exporter systemd unit file
+    - name: Install Node Exporter binary
       copy:
-        src: node_exporter.service
-        dest: /etc/systemd/system/node_exporter.service
+        src: "/opt/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+        dest: /usr/local/bin/node_exporter
+        remote_src: true
+        mode: "0755"
 
-    - name: Start Node Exporter
+    - name: Create Node Exporter systemd unit file
+      copy:
+        dest: /etc/systemd/system/node_exporter.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Node Exporter
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          User=node_exporter
+          Group=node_exporter
+          Type=simple
+          ExecStart=/usr/local/bin/node_exporter
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start and enable Node Exporter
       systemd:
         name: node_exporter
-        enabled: yes
+        daemon_reload: true
+        enabled: true
         state: started
-
-  handlers:
-    - name: restart grafana
-      systemd:
-        state: restarted
-        daemon_reload: yes
-        name: grafana-server
