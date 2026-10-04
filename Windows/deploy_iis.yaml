@@ -1,6 +1,225 @@
-- hosts: windows_servers
+# Sample host.ini (save separately on the Linux Ansible controller):
+# [windows_servers]
+# iis_server ansible_host=192.168.1.50
+#
+# [windows_servers:vars]
+# ansible_connection=winrm
+# ansible_user=Administrator
+# ansible_winrm_transport=ntlm
+# ansible_port=5986
+# ansible_winrm_scheme=https
+# ansible_winrm_server_cert_validation=validate
+#
+# Supply the password with --ask-pass or Ansible Vault.
+# For a self-signed WinRM certificate in a lab, use cert validation = ignore.
+# Otherwise the Linux controller must trust the certificate authority.
+#
+# Prerequisites: Windows Server 2019 Standard or newer, PowerShell 5.1,
+# administrator access, and a configured WinRM HTTPS listener/certificate.
+# Allow the Linux controller to reach TCP 5986 before running this playbook.
+# Ansible cannot configure WinRM before its initial connection succeeds.
+# Install dependencies ON THE LINUX CONTROLLER in Ansible's Python environment:
+#   python3 -m pip install 'pywinrm>=0.4.0'
+#   ansible-galaxy collection install ansible.windows community.windows microsoft.iis
+# Run from the repository root on Linux:
+#   ansible-playbook -i host.ini Windows/deploy_iis.yaml --ask-pass
+#
+# Edit iis_domain and iis_sites below; use -e @iis-vars.yaml for overrides.
+# Each hostname needs a DNS A record pointing to Windows, or a hosts-file
+# entry on the browsing machine. This playbook does not configure DNS.
+# HTTP only. Allow the HTTP port through upstream firewalls/security groups.
+# Feature installation automatically reboots Windows only when required.
+# Works with Desktop Experience and Server Core; no GUI console is required.
+# The listed sites' index.html, web.config and bindings are managed here.
+# Removing a list entry does not delete a previously deployed site.
+---
+- name: Install IIS and configure multiple static websites
+  hosts: windows_servers
+  gather_facts: true
+
+  vars:
+    iis_domain: example.com
+    iis_root: 'C:\inetpub\sites'
+    iis_http_port: 80
+    iis_sites:
+      - {name: test1, hostname: 'test1.{{ iis_domain }}', message: 'Hello World - test1'}
+      - {name: test2, hostname: 'test2.{{ iis_domain }}', message: 'Hello World - test2'}
+      - {name: test3, hostname: 'test3.{{ iis_domain }}', message: 'Hello World - test3'}
+      - {name: test4, hostname: 'test4.{{ iis_domain }}', message: 'Hello World - test4'}
+      - {name: test5, hostname: 'test5.{{ iis_domain }}', message: 'Hello World - test5'}
+      - {name: test6, hostname: 'test6.{{ iis_domain }}', message: 'Hello World - test6'}
+
+  pre_tasks:
+    - name: Require Windows Server 2019 or newer
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.os_family == 'Windows'
+          - "'Server' in ansible_facts.os_name"
+          - ansible_facts.os_version is version('10.0.17763', '>=')
+        fail_msg: This playbook requires Windows Server 2019 or newer.
+
+    - name: Validate unique site names, hostnames and HTTP port
+      ansible.builtin.assert:
+        that:
+          - iis_sites | length > 0
+          - iis_sites | map(attribute='name') | map('lower') | unique | length == iis_sites | length
+          - iis_sites | map(attribute='hostname') | map('lower') | unique | length == iis_sites | length
+          - iis_http_port | int > 0
+          - iis_http_port | int < 65536
+
+    - name: Validate each site definition
+      ansible.builtin.assert:
+        that:
+          - item.name is match('^[A-Za-z0-9][A-Za-z0-9_-]*$')
+          - item.name | length <= 64
+          - item.hostname is match('^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$')
+          - item.message is string
+      loop: "{{ iis_sites }}"
+      loop_control:
+        label: "{{ item.name }}"
+
   tasks:
-    - name: Install IIS
-      win_feature:
-        name: Web-Server
+    - name: Install IIS static website features and management tools
+      ansible.windows.win_feature:
+        name:
+          - Web-Server
+          - Web-Static-Content
+          - Web-Default-Doc
+          - Web-Http-Errors
+          - Web-Http-Logging
+          - Web-Filtering
+          - Web-Mgmt-Tools
+          - Web-Scripting-Tools
         state: present
+        include_management_tools: true
+      register: iis_features
+
+    - name: Reboot if feature installation requires it
+      ansible.windows.win_reboot:
+        reboot_timeout: 1200
+      when: iis_features.reboot_required | default(false)
+
+    - name: Enable and start IIS services
+      ansible.windows.win_service:
+        name: "{{ item }}"
+        start_mode: auto
+        state: started
+      loop: [WAS, W3SVC]
+
+    - name: Allow inbound HTTP through Windows Firewall
+      community.windows.win_firewall_rule:
+        name: Ansible IIS HTTP
+        direction: in
+        action: allow
+        protocol: tcp
+        localport: "{{ iis_http_port }}"
+        profiles: domain,private,public
+        enabled: true
+        state: present
+
+    - name: Create website directories
+      ansible.windows.win_file:
+        path: '{{ iis_root }}\{{ item.name }}'
+        state: directory
+      loop: "{{ iis_sites }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Create a dedicated application pool for each site
+      microsoft.iis.web_app_pool:
+        name: "{{ item.name }}-pool"
+        state: started
+        attributes:
+          managedRuntimeVersion: ''
+          autoStart: true
+          processModel.identityType: ApplicationPoolIdentity
+      loop: "{{ iis_sites }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Grant application pool read access to its website
+      ansible.windows.win_acl:
+        path: '{{ iis_root }}\{{ item.name }}'
+        user: 'IIS AppPool\{{ item.name }}-pool'
+        rights: ReadAndExecute
+        type: allow
+        state: present
+        inherit: ContainerInherit,ObjectInherit
+      loop: "{{ iis_sites }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Grant built-in anonymous IIS identity read access
+      ansible.windows.win_acl:
+        path: '{{ iis_root }}\{{ item.name }}'
+        user: S-1-5-17
+        rights: ReadAndExecute
+        type: allow
+        state: present
+        inherit: ContainerInherit,ObjectInherit
+      loop: "{{ iis_sites }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Write each website's Hello World page
+      ansible.windows.win_copy:
+        dest: '{{ iis_root }}\{{ item.name }}\index.html'
+        content: |
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>{{ item.name | e }}</title>
+          </head>
+          <body>
+            <h1>{{ item.message | e }}</h1>
+            <p>Website: {{ item.name | e }}</p>
+            <p>Hostname: {{ item.hostname | e }}</p>
+          </body>
+          </html>
+      loop: "{{ iis_sites }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Configure index.html as the default document
+      ansible.windows.win_copy:
+        dest: '{{ iis_root }}\{{ item.name }}\web.config'
+        content: |
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <system.webServer>
+              <defaultDocument enabled="true">
+                <files>
+                  <clear />
+                  <add value="index.html" />
+                </files>
+              </defaultDocument>
+            </system.webServer>
+          </configuration>
+      loop: "{{ iis_sites }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Configure hostname bindings and start websites
+      microsoft.iis.website:
+        name: "{{ item.name }}"
+        physical_path: '{{ iis_root }}\{{ item.name }}'
+        application_pool: "{{ item.name }}-pool"
+        state: started
+        bindings:
+          set:
+            - ip: '*'
+              port: "{{ iis_http_port | int }}"
+              hostname: "{{ item.hostname }}"
+              protocol: http
+      loop: "{{ iis_sites }}"
+      loop_control:
+        label: "{{ item.hostname }}"
+
+    - name: Display website URLs
+      ansible.builtin.debug:
+        msg: "http://{{ item.hostname }}{{ '' if iis_http_port | int == 80 else ':' ~ (iis_http_port | string) }}/"
+      loop: "{{ iis_sites }}"
+      loop_control:
+        label: "{{ item.name }}"
