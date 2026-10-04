@@ -1,0 +1,87 @@
+---
+- name: Require an isolated Python runtime
+  ansible.builtin.command:
+    argv: ["{{ devops_python_runtime }}", '-c', 'import sys,venv; assert sys.version_info >= (3,9), "Python tooling requires Python 3.9 or newer"']
+  changed_when: false
+
+- name: Read managed Python environment
+  ansible.builtin.stat:
+    path: "{{ devops_root }}/venvs/{{ devops_tool }}/bin/{{ devops_catalog[devops_tool].command }}"
+  register: devops_venv_command
+
+- name: Reject taking over external Python tool installation
+  ansible.builtin.assert:
+    that: >-
+      devops_current.path is none or
+      (devops_venv_command.stat.exists and
+      devops_current.resolved_path.startswith(devops_root ~ '/venvs/' ~ devops_tool ~ '/'))
+    fail_msg: "{{ devops_tool }} is externally managed. Remove it explicitly before allowing this role to manage its version."
+
+- name: Resolve latest stable Python package explicitly
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ devops_root }}/resolve_artifact.py"
+      - "{{ devops_tool }}"
+      - latest
+      - --python-index
+      - "{{ devops_pypi_metadata_base }}"
+  register: devops_python_metadata
+  changed_when: false
+  until: >-
+    devops_python_metadata is succeeded or
+    ((devops_python_metadata | to_json) | regex_search(devops_transient_error_pattern)) is none
+  retries: "{{ devops_retries }}"
+  delay: "{{ devops_retry_delay }}"
+  when: devops_requested == 'latest'
+
+- name: Select exact Python package version
+  ansible.builtin.set_fact:
+    devops_python_package_version: >-
+      {{ (devops_python_metadata.stdout | from_json).version if devops_requested == 'latest'
+      else devops_requested | regex_replace('^v', '') }}
+
+- name: Report selected Python package requirement
+  ansible.builtin.debug:
+    msg: >-
+      {{ devops_tool }} {{ devops_python_package_version }} requires Python
+      {{ (devops_python_metadata.stdout | from_json).requires_python }}.
+      Select a suitable additional Python or set devops_python_executable if needed.
+  when: devops_requested == 'latest'
+
+- name: Install tool into its own virtual environment
+  ansible.builtin.pip:
+    name: "{{ devops_catalog[devops_tool].package }}=={{ devops_python_package_version }}"
+    state: present
+    virtualenv: "{{ devops_root }}/venvs/{{ devops_tool }}"
+    virtualenv_command: "{{ devops_python_runtime }} -m venv"
+    extra_args: "{{ devops_pip_extra_args }}"
+  register: devops_pip_install
+  until: >-
+    devops_pip_install is succeeded or
+    ((devops_pip_install | to_json) | regex_search(devops_transient_error_pattern)) is none
+  retries: "{{ devops_retries }}"
+  delay: "{{ devops_retry_delay }}"
+
+- name: Expose Python tool commands
+  ansible.builtin.file:
+    src: "{{ devops_root }}/venvs/{{ devops_tool }}/bin/{{ item }}"
+    dest: "{{ devops_bin }}/{{ item }}"
+    state: link
+    owner: root
+    group: root
+    force: false
+  loop: >-
+    {{ ['ansible', 'ansible-playbook', 'ansible-galaxy', 'ansible-vault', 'ansible-inventory',
+    'ansible-config', 'ansible-doc', 'ansible-console', 'ansible-pull'] if devops_tool == 'ansible'
+    else [devops_catalog[devops_tool].command] }}
+
+- name: Verify installed Python package version inside its environment
+  ansible.builtin.command:
+    argv:
+      - "{{ devops_root }}/venvs/{{ devops_tool }}/bin/python"
+      - '-c'
+      - 'import importlib.metadata as m,sys; assert m.version(sys.argv[1]) == sys.argv[2], "Installed package version differs from requested version"'
+      - "{{ devops_catalog[devops_tool].package }}"
+      - "{{ devops_python_package_version }}"
+  changed_when: false

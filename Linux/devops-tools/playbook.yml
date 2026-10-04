@@ -1,0 +1,49 @@
+---
+- name: Provision selected DevOps tools
+  hosts: devops
+  become: true
+  gather_facts: false
+  environment: "{{ devops_environment | default({}) }}"
+  pre_tasks:
+    - name: Bootstrap Python only when missing
+      ansible.builtin.raw: |
+        if command -v python3 >/dev/null 2>&1; then
+          exit 0
+        fi
+        [ "$(uname -m)" = x86_64 ] || { echo 'Only x86-64 is supported' >&2; exit 1; }
+        . /etc/os-release
+        case "$ID:$VERSION_ID" in
+          ubuntu:22.04|ubuntu:24.04|ubuntu:26.04|fedora:43|fedora:44) ;;
+          *)
+            case "$ID:${VERSION_ID%%.*}" in
+              rhel:9|rhel:10|rocky:9|rocky:10) ;;
+              *) echo 'Unsupported OS release; Python was not bootstrapped' >&2; exit 1 ;;
+            esac
+            ;;
+        esac
+        if command -v apt-get >/dev/null 2>&1; then
+          apt-get update && apt-get install -y python3
+        elif command -v dnf >/dev/null 2>&1; then
+          dnf install -y python3
+        else
+          echo 'Unsupported package manager; install Python 3 before running.' >&2
+          exit 1
+        fi
+        echo DEVOPS_PYTHON_BOOTSTRAPPED
+      register: devops_bootstrap
+      changed_when: "'DEVOPS_PYTHON_BOOTSTRAPPED' in devops_bootstrap.stdout"
+      until: >-
+        devops_bootstrap is succeeded or
+        ((devops_bootstrap | to_json) | regex_search(devops_transient_error_pattern)) is none
+      retries: "{{ devops_retries }}"
+      delay: "{{ devops_retry_delay }}"
+      when: not ansible_check_mode
+      tags: [always]
+
+    - name: Gather operating system facts
+      ansible.builtin.setup:
+      tags: [always]
+
+  roles:
+    - role: devops_tools
+      tags: [tools]

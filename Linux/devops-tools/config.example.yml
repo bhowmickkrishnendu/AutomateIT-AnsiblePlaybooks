@@ -1,0 +1,44 @@
+---
+# Every tool is optional. Empty list means no installations.
+devops_selected_tools:
+  - awscli
+  - kubectl
+  - ansible
+  - helm
+  - git
+  - python
+  - nodejs
+  - go
+  - terraform
+  - docker
+  - jq
+  - yq
+  - pipx
+  - trivy
+  - github_cli
+  - shellcheck
+  - ansible_lint
+# Add vscode to install the editor. Configure its profiles manually afterwards.
+devops_versions:
+  python: system
+  nodejs: lts
+  go: latest
+  kubectl: latest
+  ansible: latest
+  helm: latest
+devops_upgrade_existing: false
+# Empty resolves to the non-root SSH user or SUDO_USER/local login user.
+# Root/invalid users fail preflight when Docker will be installed.
+devops_docker_user: ""
+# Supply only in a protected vars file; do not commit proxy credentials.
+devops_environment: {}
+#  https_proxy: http://proxy.example.com:3128
+#  http_proxy: http://proxy.example.com:3128
+#  no_proxy: localhost,127.0.0.1,.example.com
+# For private package mirrors, configure apt/dnf on hosts before execution.
+# Binary mirrors can supply an entire descriptor (see README).
+devops_artifact_overrides: {}
+# Signed Docker/VS Code mirror settings are documented in README.
+devops_repository_overrides: {}
+# Optional centrally managed Python package index:
+devops_pip_extra_args: ""

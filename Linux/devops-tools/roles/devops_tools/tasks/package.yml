@@ -1,0 +1,25 @@
+---
+- name: Determine distribution package name
+  ansible.builtin.set_fact:
+    devops_package_name: >-
+      {{ ('python' ~ devops_requested) if devops_tool == 'python' and devops_requested != 'system' else
+      ('shellcheck' if devops_tool == 'shellcheck' and ansible_facts.os_family == 'Debian' else
+      devops_catalog[devops_tool].package) }}
+
+- name: Install distribution package without replacing system Python
+  ansible.builtin.package:
+    name: "{{ devops_package_name }}"
+    state: "{{ 'latest' if devops_upgrade_existing else 'present' }}"
+  register: devops_package_install
+  until: >-
+    devops_package_install is succeeded or
+    ((devops_package_install | to_json) | regex_search(devops_transient_error_pattern)) is none
+  retries: "{{ devops_retries }}"
+  delay: "{{ devops_retry_delay }}"
+
+- name: Install venv support for an additional Ubuntu Python
+  ansible.builtin.apt:
+    name: "{{ devops_package_name }}-venv"
+    state: present
+    lock_timeout: 120
+  when: devops_tool == 'python' and devops_requested != 'system' and ansible_facts.os_family == 'Debian'

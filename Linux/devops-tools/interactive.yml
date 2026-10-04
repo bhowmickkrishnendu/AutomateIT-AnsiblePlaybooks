@@ -1,0 +1,61 @@
+---
+- name: Choose tools and installation policy
+  hosts: devops
+  gather_facts: false
+  vars_prompt:
+    - name: selected_tools
+      prompt: >-
+        Comma-separated tools (awscli,kubectl,ansible,helm,vscode,git,python,nodejs,go,
+        terraform,docker,jq,yq,pipx,trivy,github_cli,shellcheck,ansible_lint).
+        Empty selects nothing
+      private: false
+      default: ""
+    - name: upgrade_existing
+      prompt: "Allow selected tools to upgrade? yes/no (exact versions also authorize version changes)"
+      private: false
+      default: "no"
+  tasks:
+    - name: Validate interactive upgrade choice
+      ansible.builtin.assert:
+        that: upgrade_existing | lower in ['yes', 'no']
+
+    - name: Choose Python version when selected
+      ansible.builtin.pause:
+        prompt: "Python: system (default), or additional major.minor version, for example 3.12"
+      register: python_choice
+      when: "'python' in selected_tools.split(',') | map('trim') | list"
+      run_once: true
+
+    - name: Choose Node.js version when selected
+      ansible.builtin.pause:
+        prompt: "Node.js: lts (default), latest, or exact version, for example 22.14.0"
+      register: node_choice
+      when: "'nodejs' in selected_tools.split(',') | map('trim') | list"
+      run_once: true
+
+    - name: Choose Go version when selected
+      ansible.builtin.pause:
+        prompt: "Go: latest (default) or exact version, for example 1.24.1"
+      register: go_choice
+      when: "'go' in selected_tools.split(',') | map('trim') | list"
+      run_once: true
+
+    - name: Choose existing Docker group user when selected
+      ansible.builtin.pause:
+        prompt: "Docker group user: leave empty to use each host's SSH/local login user"
+      register: docker_choice
+      when: "'docker' in selected_tools.split(',') | map('trim') | list"
+      run_once: true
+
+    - name: Set configuration on every selected host
+      ansible.builtin.set_fact:
+        devops_selected_tools: "{{ selected_tools.split(',') | map('trim') | reject('equalto', '') | unique | list }}"
+        devops_versions:
+          python: "{{ python_choice.user_input | default('') | trim or 'system' }}"
+          nodejs: "{{ node_choice.user_input | default('') | trim or 'lts' }}"
+          go: "{{ go_choice.user_input | default('') | trim or 'latest' }}"
+        devops_upgrade_existing: "{{ upgrade_existing | lower == 'yes' }}"
+        devops_docker_user: "{{ docker_choice.user_input | default('') | trim }}"
+
+- name: Apply interactive configuration
+  ansible.builtin.import_playbook: playbook.yml

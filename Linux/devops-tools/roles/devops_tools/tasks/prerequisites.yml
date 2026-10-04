@@ -1,0 +1,47 @@
+---
+- name: Refresh apt metadata when stale
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 120
+  register: devops_apt_cache
+  until: >-
+    devops_apt_cache is succeeded or
+    ((devops_apt_cache | to_json) | regex_search(devops_transient_error_pattern)) is none
+  retries: "{{ devops_retries }}"
+  delay: "{{ devops_retry_delay }}"
+  when: ansible_facts.os_family == 'Debian'
+
+- name: Install installation dependencies
+  ansible.builtin.package:
+    name: >-
+      {{ ['ca-certificates', 'unzip', 'tar', 'gzip', 'xz-utils', 'gnupg', 'python3-venv', 'python3-pip', 'less', 'groff']
+      if ansible_facts.os_family == 'Debian' else
+      ['ca-certificates', 'unzip', 'tar', 'gzip', 'xz', 'gnupg2', 'python3-pip', 'less', 'groff'] }}
+    state: present
+  register: devops_dependencies
+  until: >-
+    devops_dependencies is succeeded or
+    ((devops_dependencies | to_json) | regex_search(devops_transient_error_pattern)) is none
+  retries: "{{ devops_retries }}"
+  delay: "{{ devops_retry_delay }}"
+
+- name: Create root-owned installation directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - "{{ devops_root }}"
+    - "{{ devops_root }}/cache"
+    - "{{ devops_bin }}"
+
+- name: Install metadata resolver
+  ansible.builtin.copy:
+    src: resolve_artifact.py
+    dest: "{{ devops_root }}/resolve_artifact.py"
+    owner: root
+    group: root
+    mode: '0644'

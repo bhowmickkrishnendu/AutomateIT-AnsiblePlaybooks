@@ -1,0 +1,65 @@
+---
+- name: Create dedicated AWS verification key directory
+  ansible.builtin.file:
+    path: "{{ devops_root }}/aws-gnupg"
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Write official AWS signing key
+  ansible.builtin.copy:
+    content: "{{ devops_artifact.public_key }}"
+    dest: "{{ devops_root }}/aws-gnupg/aws.asc"
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Check AWS signing key fingerprint against pinned identity
+  ansible.builtin.command:
+    argv: [gpg, --batch, --with-colons, --show-keys, "{{ devops_root }}/aws-gnupg/aws.asc"]
+  register: devops_aws_fingerprint
+  changed_when: false
+  failed_when: >-
+    devops_aws_fingerprint.rc != 0 or
+    'FB5DB77FD5C118B80511ADA8A6310ACC4672475C' not in devops_aws_fingerprint.stdout
+
+- name: Import trusted AWS key into isolated keyring
+  ansible.builtin.command:
+    argv: [gpg, --batch, --homedir, "{{ devops_root }}/aws-gnupg", --import, "{{ devops_root }}/aws-gnupg/aws.asc"]
+  register: devops_aws_import
+  changed_when: "'imported: 1' in devops_aws_import.stderr"
+
+- name: Download detached AWS signature
+  ansible.builtin.get_url:
+    url: "{{ devops_artifact.signature_url }}"
+    dest: "{{ devops_root }}/cache/awscli-{{ devops_artifact.version }}.sig"
+    owner: root
+    group: root
+    mode: '0644'
+    timeout: 60
+    validate_certs: true
+  register: devops_aws_signature_download
+  until: >-
+    devops_aws_signature_download is succeeded or
+    ((devops_aws_signature_download | to_json) | regex_search(devops_transient_error_pattern)) is none
+  retries: "{{ devops_retries }}"
+  delay: "{{ devops_retry_delay }}"
+
+- name: Verify AWS installer signature
+  ansible.builtin.command:
+    argv:
+      - gpg
+      - --batch
+      - --homedir
+      - "{{ devops_root }}/aws-gnupg"
+      - --verify
+      - --status-fd
+      - '1'
+      - "{{ devops_root }}/cache/awscli-{{ devops_artifact.version }}.sig"
+      - "{{ devops_root }}/cache/awscli-{{ devops_artifact.version }}.download"
+  register: devops_aws_verification
+  changed_when: false
+  failed_when: >-
+    devops_aws_verification.rc != 0 or
+    'VALIDSIG FB5DB77FD5C118B80511ADA8A6310ACC4672475C' not in devops_aws_verification.stdout
