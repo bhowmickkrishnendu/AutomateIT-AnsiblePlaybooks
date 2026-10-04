@@ -1,0 +1,10 @@
+---
+profile: production
+exclude_paths:
+  - tests/
+# Interactive entrypoint intentionally chooses one configuration for the inventory.
+warn_list:
+  - run-once
+# Public configuration consistently uses the shorter devops_ namespace.
+skip_list:
+  - var-naming[no-role-prefix]

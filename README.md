@@ -51,6 +51,7 @@ AutomateIT-AnsiblePlaybooks/
 ```
 
 ## Linux Playbooks
+- **Selectable DevOps Tooling:** [`Linux/devops-tools`](Linux/devops-tools/README.md) provides interactive and unattended installation with OS detection, optional tools, version policies, verified downloads, and Docker/Podman handling.
 - **Application Deployment:**
     - `deploy_tomcat_service.yml`, `tomcat_setup.yml`, `openjdk-11-jdk-installler.yml`
 - **Monitoring & Logging:**

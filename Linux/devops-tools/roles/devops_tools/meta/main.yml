@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  role_name: devops_tools
+  author: AutomateIT maintainers
+  description: Selectable Linux DevOps tooling with verified downloads and explicit ownership
+  license: MIT
+  min_ansible_version: '2.20'
+  platforms:
+    - name: Ubuntu
+      versions: [all]
+    - name: Fedora
+      versions: [all]
+    - name: EL
+      versions: [all]
+  galaxy_tags: [devops, development, linux]
+dependencies: []

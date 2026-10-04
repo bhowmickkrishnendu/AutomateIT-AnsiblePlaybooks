@@ -1,0 +1,130 @@
+---
+- name: Validate host and requested tools
+  ansible.builtin.assert:
+    that:
+      - ansible_version.full is version('2.20', '>=')
+      - ansible_facts.system == 'Linux'
+      - ansible_facts.architecture == 'x86_64'
+      - ansible_facts.distribution in devops_supported_releases
+      - >-
+        (ansible_facts.distribution_version if ansible_facts.distribution == 'Ubuntu'
+        else ansible_facts.distribution_major_version) in
+        devops_supported_releases[ansible_facts.distribution]
+      - devops_selected_tools is sequence and devops_selected_tools is not string
+      - devops_selected_tools | difference(devops_catalog.keys() | list) | length == 0
+      - devops_versions is mapping
+      - devops_versions.keys() | difference(devops_default_versions.keys() | list) | length == 0
+      - devops_upgrade_existing is boolean
+      - devops_bin == '/usr/local/bin'
+      - devops_root == '/opt/devops-tools'
+    fail_msg: "Unsupported host/configuration. See README release allowlist and tool names."
+  tags: [always]
+
+- name: Prepare effective configuration and summary
+  ansible.builtin.set_fact:
+    devops_effective_versions: "{{ devops_default_versions | combine(devops_versions) }}"
+    devops_summary: {}
+    devops_selected: "{{ devops_selected_tools | unique | list }}"
+    devops_login_user: >-
+      {{ devops_docker_user if devops_docker_user | length > 0 else
+      (ansible_user | default(lookup('ansible.builtin.env', 'SUDO_USER') or
+      lookup('ansible.builtin.env', 'USER'), true)) }}
+  tags: [always]
+
+- name: Validate version policies before making changes
+  ansible.builtin.assert:
+    that:
+      - item.value is string
+      - >-
+        (item.key == 'python' and (item.value == 'system' or
+        item.value is match('^3\.[0-9]+$'))) or
+        (item.key != 'python' and (item.value == 'latest' or
+        (item.key == 'nodejs' and item.value == 'lts') or
+        item.value is match('^v?[0-9]+\.[0-9]+\.[0-9]+$')))
+    fail_msg: "Invalid version policy for {{ item.key }}: {{ item.value }}"
+  loop: "{{ devops_effective_versions | dict2items }}"
+  tags: [always]
+
+- name: Discover Podman without changing the host
+  ansible.builtin.command:
+    argv: [python3, '-c', 'import shutil; print(shutil.which("podman") or "")']
+  register: devops_podman
+  changed_when: false
+  check_mode: false
+  tags: [always]
+
+- name: Choose Python tooling runtime and process Python first
+  ansible.builtin.set_fact:
+    devops_python_runtime: >-
+      {{ '/usr/bin/python' ~ devops_effective_versions.python
+      if 'python' in devops_selected and devops_effective_versions.python != 'system'
+      else devops_python_executable }}
+    devops_selected: "{{ (['python'] if 'python' in devops_selected else []) + (devops_selected | reject('equalto', 'python') | list) }}"
+  tags: [always]
+
+- name: Validate Python runtime before modifying the host
+  ansible.builtin.command:
+    argv:
+      - "{{ devops_python_runtime }}"
+      - '-c'
+      - 'import venv,sys; assert sys.version_info >= (3,9), "Python 3.9+ is required"'
+  changed_when: false
+  check_mode: false
+  when: >-
+    devops_selected | intersect(['ansible', 'ansible_lint', 'pipx']) | length > 0 and
+    not ('python' in devops_selected and devops_effective_versions.python != 'system')
+  tags: [always]
+
+- name: Validate Docker group user before installations
+  when: "'docker' in devops_selected and devops_podman.stdout | length == 0"
+  tags: [always]
+  block:
+    - name: Require a non-root Docker user
+      ansible.builtin.assert:
+        that:
+          - devops_login_user | length > 0
+          - devops_login_user != 'root'
+        fail_msg: "Set devops_docker_user to an existing non-root Linux user."
+    - name: Verify the Docker user exists
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ devops_login_user }}"
+
+- name: Install selected tools with host-level failure reporting
+  tags: [always]
+  block:
+    - name: Prepare shared prerequisites
+      ansible.builtin.include_tasks: prerequisites.yml
+      when: devops_selected | length > 0 and not ansible_check_mode
+
+    - name: Process each selected tool
+      ansible.builtin.include_tasks: tool.yml
+      loop: "{{ devops_selected }}"
+      loop_control:
+        loop_var: devops_tool
+
+  rescue:
+    - name: Record failed tool in summary
+      ansible.builtin.set_fact:
+        devops_summary: >-
+          {{ devops_summary | combine({devops_active_tool: {
+          'status': 'failed', 'reason': ansible_failed_result.msg | default('See failed task output')}}) }}
+      when: devops_active_tool is defined
+    - name: Report incomplete host installation
+      ansible.builtin.debug:
+        msg:
+          completed: "{{ devops_summary }}"
+          failed_task: "{{ ansible_failed_task.name }}"
+          reason: "{{ ansible_failed_result.msg | default('See failed task output above') }}"
+          not_processed: "{{ devops_selected | difference(devops_summary.keys() | list) }}"
+    - name: Stop installation on this host
+      ansible.builtin.fail:
+        msg: "DevOps tool provisioning failed; completed changes remain. Fix the cause and rerun."
+  always:
+    - name: Print per-host tool summary
+      ansible.builtin.debug:
+        msg:
+          host: "{{ inventory_hostname }}"
+          os: "{{ ansible_facts.distribution }} {{ ansible_facts.distribution_version }}"
+          tools: "{{ devops_summary }}"
+          unselected: "{{ devops_catalog.keys() | difference(devops_selected) | list }}"

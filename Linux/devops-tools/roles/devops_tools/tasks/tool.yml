@@ -1,0 +1,74 @@
+---
+- name: Track active tool for failure reporting
+  ansible.builtin.set_fact:
+    devops_active_tool: "{{ devops_tool }}"
+
+- name: Detect command path and installed version
+  ansible.builtin.command:
+    argv: >-
+      {{ ['python3', '-c',
+      devops_inspector_source,
+      ('python' ~ devops_effective_versions.python) if devops_tool == 'python' and devops_effective_versions.python != 'system' else devops_catalog[devops_tool].command]
+      + devops_catalog[devops_tool].args }}
+  register: devops_probe
+  changed_when: false
+  check_mode: false
+
+- name: Determine installation policy
+  ansible.builtin.set_fact:
+    devops_current: "{{ devops_probe.stdout | from_json }}"
+    devops_requested: "{{ devops_effective_versions[devops_tool] | default('latest') }}"
+
+- name: Fail on broken existing executable
+  ansible.builtin.assert:
+    that: >-
+      devops_current.path is none or devops_current.rc == 0 or
+      (devops_tool == 'docker' and devops_podman.stdout | length > 0)
+    fail_msg: "{{ devops_tool }} exists but its version command failed; repair it before provisioning."
+
+- name: Determine whether to manage this tool
+  ansible.builtin.set_fact:
+    devops_manage: >-
+      {{ devops_current.path is none or devops_upgrade_existing or
+      devops_requested not in ['latest', 'lts', 'system'] }}
+    devops_skip_podman: "{{ devops_tool == 'docker' and devops_podman.stdout | length > 0 }}"
+
+- name: Record preserved or skipped tool
+  ansible.builtin.set_fact:
+    devops_summary: >-
+      {{ devops_summary | combine({devops_tool: {
+      'status': 'skipped: Podman present' if devops_skip_podman else 'preserved',
+      'version': devops_current.version}}) }}
+  when: not devops_manage or devops_skip_podman
+
+- name: Explain dry-run action
+  ansible.builtin.set_fact:
+    devops_summary: "{{ devops_summary | combine({devops_tool: {'status': 'planned; installation and version resolution skipped', 'requested': devops_requested}}) }}"
+  when: ansible_check_mode and devops_manage and not devops_skip_podman
+
+- name: Install or reconcile selected tool
+  ansible.builtin.include_tasks: "{{ devops_catalog[devops_tool].kind }}.yml"
+  when: devops_manage and not devops_skip_podman and not ansible_check_mode
+
+- name: Configure Docker service and group even when preserving its version
+  ansible.builtin.include_tasks: docker_access.yml
+  when: devops_tool == 'docker' and not devops_skip_podman and not ansible_check_mode
+
+- name: Verify selected command after installation
+  ansible.builtin.command:
+    argv: >-
+      {{ [('python' ~ devops_effective_versions.python) if devops_tool == 'python' and
+      devops_effective_versions.python != 'system' else devops_catalog[devops_tool].command]
+      + devops_catalog[devops_tool].args }}
+  register: devops_verified
+  changed_when: false
+  when: not ansible_check_mode and not devops_skip_podman
+
+- name: Record verified tool
+  ansible.builtin.set_fact:
+    devops_summary: >-
+      {{ devops_summary | combine({devops_tool: {
+      'status': 'installed' if devops_current.path is none else
+      ('reconciled' if devops_manage else 'preserved'),
+      'version': (devops_verified.stdout or devops_verified.stderr) | trim}}) }}
+  when: not ansible_check_mode and not devops_skip_podman

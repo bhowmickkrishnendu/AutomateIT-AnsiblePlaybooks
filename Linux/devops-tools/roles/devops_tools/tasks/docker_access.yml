@@ -1,0 +1,21 @@
+---
+- name: Enable and start Docker
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Ensure Docker group exists
+  ansible.builtin.group:
+    name: docker
+    state: present
+
+- name: Add selected existing user to Docker group
+  ansible.builtin.user:
+    name: "{{ devops_login_user }}"
+    groups: docker
+    append: true
+
+- name: Report Docker group activation requirement
+  ansible.builtin.debug:
+    msg: "{{ devops_login_user }} can use Docker after logging out and in again. Docker group membership grants root-equivalent access."

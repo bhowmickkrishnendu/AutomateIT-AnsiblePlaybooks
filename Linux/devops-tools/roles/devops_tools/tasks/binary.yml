@@ -1,0 +1,140 @@
+---
+- name: Resolve exact version and verified artifact metadata
+  ansible.builtin.command:
+    argv:
+      - python3
+      - "{{ devops_root }}/resolve_artifact.py"
+      - "{{ devops_tool }}"
+      - "{{ devops_requested }}"
+      - --override
+      - "{{ devops_artifact_overrides[devops_tool] | default({}) | to_json }}"
+  register: devops_resolution
+  changed_when: false
+  until: >-
+    devops_resolution is succeeded or
+    ((devops_resolution | to_json) | regex_search(devops_transient_error_pattern)) is none
+  retries: "{{ devops_retries }}"
+  delay: "{{ devops_retry_delay }}"
+
+- name: Read desired artifact
+  ansible.builtin.set_fact:
+    devops_artifact: "{{ devops_resolution.stdout | from_json }}"
+
+- name: Compare installed and requested version
+  ansible.builtin.set_fact:
+    devops_binary_matches: >-
+      {{ devops_current.path is not none and
+      (devops_current.version | regex_search('(?<![0-9.])' ~
+      (devops_artifact.version | regex_escape) ~ '(?![0-9A-Za-z.-])')) is not none }}
+
+- name: Reconcile binary installation
+  when: not devops_binary_matches
+  block:
+    - name: Refuse replacing external installations
+      ansible.builtin.assert:
+        that: devops_current.path is none or devops_current.resolved_path.startswith(devops_root + '/')
+        fail_msg: >-
+          {{ devops_tool }} is externally managed at {{ devops_current.path }}.
+          Remove it explicitly before this role manages a different version.
+
+    - name: Create versioned tool directory
+      ansible.builtin.file:
+        path: "{{ devops_root }}/{{ devops_tool }}/{{ devops_artifact.version }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Download artifact with integrity verification
+      ansible.builtin.get_url:
+        url: "{{ devops_artifact.url }}"
+        dest: "{{ devops_root }}/cache/{{ devops_tool }}-{{ devops_artifact.version }}.download"
+        checksum: "{{ 'sha256:' ~ devops_artifact.sha256 if devops_artifact.format != 'aws' else omit }}"
+        owner: root
+        group: root
+        mode: '0644'
+        timeout: 60
+        validate_certs: true
+      register: devops_download
+      until: >-
+        devops_download is succeeded or
+        ((devops_download | to_json) | regex_search(devops_transient_error_pattern)) is none
+      retries: "{{ devops_retries }}"
+      delay: "{{ devops_retry_delay }}"
+
+    - name: Verify AWS PGP signature before extracting or executing
+      ansible.builtin.include_tasks: aws_signature.yml
+      when: devops_artifact.format == 'aws'
+
+    - name: Extract verified release archive
+      ansible.builtin.unarchive:
+        src: "{{ devops_root }}/cache/{{ devops_tool }}-{{ devops_artifact.version }}.download"
+        dest: "{{ devops_root }}/{{ devops_tool }}/{{ devops_artifact.version }}"
+        remote_src: true
+        creates: "{{ devops_root }}/{{ devops_tool }}/{{ devops_artifact.version }}/{{ devops_artifact.member }}"
+      when: devops_artifact.format != 'raw'
+
+    - name: Place standalone binary
+      ansible.builtin.copy:
+        src: "{{ devops_root }}/cache/{{ devops_tool }}-{{ devops_artifact.version }}.download"
+        dest: "{{ devops_root }}/{{ devops_tool }}/{{ devops_artifact.version }}/{{ devops_artifact.member }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0755'
+      when: devops_artifact.format == 'raw'
+
+    - name: Ensure executable permissions on release binary
+      ansible.builtin.file:
+        path: "{{ devops_root }}/{{ devops_tool }}/{{ devops_artifact.version }}/{{ devops_artifact.member }}"
+        mode: '0755'
+
+    - name: Run verified AWS CLI installer
+      ansible.builtin.command:
+        argv:
+          - "{{ devops_root }}/awscli/{{ devops_artifact.version }}/aws/install"
+          - --install-dir
+          - "{{ devops_root }}/awscli-install"
+          - --bin-dir
+          - "{{ devops_bin }}"
+          - --update
+      register: devops_aws_install
+      changed_when: devops_aws_install.rc == 0
+      when: devops_tool == 'awscli'
+
+    - name: Link versioned binary into PATH
+      ansible.builtin.file:
+        src: "{{ devops_root }}/{{ devops_tool }}/{{ devops_artifact.version }}/{{ devops_artifact.member }}"
+        dest: "{{ devops_bin }}/{{ devops_catalog[devops_tool].command }}"
+        state: link
+        owner: root
+        group: root
+        force: false
+      when: devops_tool != 'awscli'
+
+    - name: Link Node.js npm and npx commands
+      ansible.builtin.file:
+        src: "{{ devops_root }}/nodejs/{{ devops_artifact.version }}/node-v{{ devops_artifact.version }}-linux-x64/bin/{{ item }}"
+        dest: "{{ devops_bin }}/{{ item }}"
+        state: link
+        force: false
+      loop: [npm, npx]
+      when: devops_tool == 'nodejs'
+
+    - name: Link Go formatter
+      ansible.builtin.file:
+        src: "{{ devops_root }}/go/{{ devops_artifact.version }}/go/bin/gofmt"
+        dest: "{{ devops_bin }}/gofmt"
+        state: link
+        force: false
+      when: devops_tool == 'go'
+
+- name: Verify resolved binary version
+  ansible.builtin.command:
+    argv: "{{ [devops_catalog[devops_tool].command] + devops_catalog[devops_tool].args }}"
+  register: devops_binary_verified
+  changed_when: false
+  failed_when: >-
+    devops_binary_verified.rc != 0 or
+    ((devops_binary_verified.stdout ~ devops_binary_verified.stderr) |
+    regex_search('(?<![0-9.])' ~ (devops_artifact.version | regex_escape) ~ '(?![0-9A-Za-z.-])')) is none

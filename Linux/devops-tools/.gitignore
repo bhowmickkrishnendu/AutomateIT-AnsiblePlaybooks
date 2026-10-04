@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+inventory.ini
+inventory.test.ini
+config.yml
+config.test.yml
+.ansible/
+.cache/

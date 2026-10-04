@@ -1,0 +1,117 @@
+---
+- name: Choose official repository settings
+  ansible.builtin.set_fact:
+    devops_docker_distribution: >-
+      {{ 'ubuntu' if ansible_facts.distribution == 'Ubuntu' else
+      ('fedora' if ansible_facts.distribution == 'Fedora' else
+      ('centos' if ansible_facts.distribution == 'Rocky' else 'rhel')) }}
+    devops_repository_key: >-
+      {{ 'https://packages.microsoft.com/keys/microsoft.asc' if devops_tool == 'vscode'
+      else 'https://download.docker.com/linux/' ~
+      ('ubuntu' if ansible_facts.distribution == 'Ubuntu' else
+      ('fedora' if ansible_facts.distribution == 'Fedora' else
+      ('centos' if ansible_facts.distribution == 'Rocky' else 'rhel'))) ~ '/gpg' }}
+
+- name: Assemble official repository policy with approved mirror overrides
+  ansible.builtin.set_fact:
+    devops_repository_settings: >-
+      {{ {'key_url': devops_repository_key,
+      'fingerprint': ('BC528686B50D79E339D3721CEB3E94ADBE1229CF' if devops_tool == 'vscode' else
+      ('9DC858229FC7DD38854AE2D88D81803C0EBFCD88' if ansible_facts.os_family == 'Debian' else
+      '060A61C51B558A7F742B77AAC52FEB6B621E9F35')),
+      'apt_url': ('https://packages.microsoft.com/repos/code' if devops_tool == 'vscode' else
+      'https://download.docker.com/linux/ubuntu'),
+      'apt_suite': ('stable' if devops_tool == 'vscode' else ansible_facts.distribution_release),
+      'apt_component': ('main' if devops_tool == 'vscode' else 'stable'),
+      'rpm_baseurl': ('https://packages.microsoft.com/yumrepos/vscode' if devops_tool == 'vscode' else
+      'https://download.docker.com/linux/' ~ devops_docker_distribution ~ '/$releasever/$basearch/stable')}
+      | combine(devops_repository_overrides[devops_tool] | default({})) }}
+
+- name: Require signed HTTPS repository configuration
+  ansible.builtin.assert:
+    that:
+      - devops_repository_settings.key_url is match('^https://')
+      - devops_repository_settings.fingerprint is match('^[A-F0-9]{40}$')
+      - devops_repository_settings.apt_url is match('^https://[^ ]+$')
+      - devops_repository_settings.rpm_baseurl is match('^https://[^ ]+$')
+      - devops_repository_settings.apt_suite is match('^[a-zA-Z0-9./_-]+$')
+      - devops_repository_settings.apt_component is match('^[a-zA-Z0-9_-]+$')
+
+- name: Configure Ubuntu signed repository
+  when: ansible_facts.os_family == 'Debian'
+  block:
+    - name: Create scoped apt key directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Download official apt signing key
+      ansible.builtin.get_url:
+        url: "{{ devops_repository_settings.key_url }}"
+        dest: "/etc/apt/keyrings/devops-{{ devops_tool }}.asc"
+        owner: root
+        group: root
+        mode: '0644'
+        validate_certs: true
+        timeout: 60
+      register: devops_repo_key_download
+      until: >-
+        devops_repo_key_download is succeeded or
+        ((devops_repo_key_download | to_json) | regex_search(devops_transient_error_pattern)) is none
+      retries: "{{ devops_retries }}"
+      delay: "{{ devops_retry_delay }}"
+
+    - name: Inspect downloaded signing key fingerprint
+      ansible.builtin.command:
+        argv: [gpg, --batch, --with-colons, --show-keys, "/etc/apt/keyrings/devops-{{ devops_tool }}.asc"]
+      register: devops_repo_key_info
+      changed_when: false
+      failed_when: >-
+        devops_repo_key_info.rc != 0 or
+        devops_repository_settings.fingerprint not in devops_repo_key_info.stdout
+
+    - name: Add apt repository with scoped signing key
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch=amd64 signed-by=/etc/apt/keyrings/devops-{{ devops_tool }}.asc]
+          {{ devops_repository_settings.apt_url }} {{ devops_repository_settings.apt_suite }}
+          {{ devops_repository_settings.apt_component }}
+        filename: "devops-{{ devops_tool }}"
+        state: present
+        update_cache: true
+
+- name: Configure RPM signed repository
+  when: ansible_facts.os_family == 'RedHat'
+  block:
+    - name: Import official RPM signing key with pinned fingerprint
+      ansible.builtin.rpm_key:
+        key: "{{ devops_repository_settings.key_url }}"
+        fingerprint: "{{ devops_repository_settings.fingerprint }}"
+        state: present
+        validate_certs: true
+
+    - name: Add official RPM repository
+      ansible.builtin.yum_repository:
+        name: "devops-{{ devops_tool }}"
+        description: "Official {{ devops_tool }} packages"
+        baseurl: "{{ devops_repository_settings.rpm_baseurl }}"
+        gpgkey: "{{ devops_repository_settings.key_url }}"
+        gpgcheck: true
+        enabled: true
+        sslverify: true
+
+- name: Install official packages
+  ansible.builtin.package:
+    name: >-
+      {{ ['code'] if devops_tool == 'vscode' else
+      ['docker-ce', 'docker-ce-cli', 'containerd.io', 'docker-buildx-plugin', 'docker-compose-plugin'] }}
+    state: "{{ 'latest' if devops_upgrade_existing else 'present' }}"
+  register: devops_repository_install
+  until: >-
+    devops_repository_install is succeeded or
+    ((devops_repository_install | to_json) | regex_search(devops_transient_error_pattern)) is none
+  retries: "{{ devops_retries }}"
+  delay: "{{ devops_retry_delay }}"

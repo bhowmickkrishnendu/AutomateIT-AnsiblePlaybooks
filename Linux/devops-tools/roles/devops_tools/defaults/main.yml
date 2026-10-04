@@ -1,0 +1,63 @@
+---
+devops_selected_tools: []
+devops_versions: {}
+devops_upgrade_existing: false
+devops_docker_user: ""
+devops_environment: {}
+devops_artifact_overrides: {}
+devops_repository_overrides: {}
+devops_pip_extra_args: ""
+devops_python_executable: /usr/bin/python3
+devops_pypi_metadata_base: https://pypi.org/pypi
+devops_root: /opt/devops-tools
+devops_bin: /usr/local/bin
+devops_retries: 3
+devops_retry_delay: 5
+# Explicit allowlist, maintained independently from upstream lifecycle policy.
+# These releases are implementation targets, not yet integration-certified.
+devops_supported_releases:
+  Ubuntu: ['22.04', '24.04', '26.04']
+  Fedora: ['43', '44']
+  RedHat: ['9', '10']
+  Rocky: ['9', '10']
+devops_default_versions:
+  python: system
+  nodejs: lts
+  go: latest
+  awscli: latest
+  kubectl: latest
+  ansible: latest
+  helm: latest
+  terraform: latest
+  yq: latest
+  trivy: latest
+  ansible_lint: latest
+  pipx: latest
+  github_cli: latest
+  shellcheck: latest
+devops_catalog:
+  awscli: {kind: binary, command: aws, args: ['--version']}
+  kubectl: {kind: binary, command: kubectl, args: ['version', '--client', '-o', 'json']}
+  helm: {kind: binary, command: helm, args: ['version', '--short']}
+  terraform: {kind: binary, command: terraform, args: ['version', '-json']}
+  nodejs: {kind: binary, command: node, args: ['--version']}
+  go: {kind: binary, command: go, args: ['version']}
+  yq: {kind: binary, command: yq, args: ['--version']}
+  trivy: {kind: binary, command: trivy, args: ['--version']}
+  ansible: {kind: python, command: ansible, args: ['--version'], package: ansible}
+  ansible_lint: {kind: python, command: ansible-lint, args: ['--version'], package: ansible-lint}
+  pipx: {kind: python, command: pipx, args: ['--version'], package: pipx}
+  git: {kind: package, command: git, args: ['--version'], package: git}
+  jq: {kind: package, command: jq, args: ['--version'], package: jq}
+  shellcheck: {kind: binary, command: shellcheck, args: ['--version'], package: ShellCheck}
+  python: {kind: package, command: python3, args: ['--version'], package: python3}
+  vscode: {kind: repository, command: code, args: ['--version', '--no-sandbox', '--user-data-dir=/opt/devops-tools/code-version-check'], package: code}
+  github_cli: {kind: binary, command: gh, args: ['--version'], package: gh}
+  docker: {kind: repository, command: docker, args: ['--version'], package: docker-ce}
+devops_inspector_source: >-
+  import json,os,shutil,subprocess,sys;
+  p=shutil.which(sys.argv[1]);
+  r=subprocess.run([p]+sys.argv[2:],capture_output=True,text=True,timeout=30) if p else None;
+  print(json.dumps(dict(path=p,resolved_path=os.path.realpath(p) if p else None,
+  rc=r.returncode if r else None,version=((r.stdout or r.stderr).strip() if r else ""))))
+devops_transient_error_pattern: '(?i)(timeout|timed out|temporary|temporarily|connection|network|resolve|dns|429|502|503|504|lock|unreachable|reset by peer)'
