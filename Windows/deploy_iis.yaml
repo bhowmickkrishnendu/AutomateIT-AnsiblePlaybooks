@@ -54,9 +54,9 @@
       ansible.builtin.assert:
         that:
           - ansible_facts.os_family == 'Windows'
-          - "'Server' in ansible_facts.os_name"
-          - ansible_facts.os_version is version('10.0.17763', '>=')
-        fail_msg: This playbook requires Windows Server 2019 or newer.
+          - "'Server' in ansible_facts.distribution"
+          - ansible_facts.distribution_version is version('10.0.17763', '>=')
+        fail_msg: "This playbook requires Windows Server 2019 or newer. Detected: {{ ansible_facts.distribution | default('unknown') }} {{ ansible_facts.distribution_version | default('unknown') }}"
 
     - name: Validate unique site names, hostnames and HTTP port
       ansible.builtin.assert:
